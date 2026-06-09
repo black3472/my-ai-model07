@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 포즈 인식 테스트</title>
+    <style>
+        body {
+            font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif;
+            background-color: #121214;
+            color: #e4e4e7;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: #ffffff;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+
+        p.subtitle {
+            font-size: 1.1rem;
+            color: #a1a1aa;
+            margin-bottom: 30px;
+        }
+
+        .btn-start {
+            background-color: #4f46e5;
+            color: white;
+            border: none;
+            padding: 14px 28px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.2s ease-in-out;
+            margin-bottom: 25px;
+            box-shadow: 0 4px 6px -1px rgba(79, 70, 229, 0.2);
+        }
+
+        .btn-start:hover {
+            background-color: #4338ca;
+        }
+
+        #webcam-container {
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+            background-color: #27272a;
+            line-height: 0;
+            margin-bottom: 30px;
+        }
+
+        #canvas {
+            display: block;
+        }
+
+        #label-container {
+            width: 100%;
+            max-width: 400px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .result-bar-wrapper {
+            background-color: #1e1e22;
+            padding: 12px 16px;
+            border-radius: 10px;
+            border: 1px solid #27272a;
+        }
+
+        .label-text {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .progress-bar-bg {
+            background-color: #3f3f46;
+            border-radius: 9999px;
+            height: 12px;
+            overflow: hidden;
+        }
+
+        .progress-bar-fill {
+            background-color: #10b981;
+            height: 100%;
+            width: 0%;
+            transition: width 0.1s ease-out;
+            border-radius: 9999px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>AI 포즈 인식 테스트</h1>
+    <p class="subtitle">아래 버튼을 눌러 카메라를 켜고 포즈를 테스트해보세요.</p>
+
+    <button class="btn-start" type="button" onclick="init()">모델 시작하기</button>
+
+    <div id="webcam-container">
+        <canvas id="canvas"></canvas>
+    </div>
+    
+    <div id="label-container"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/posenet@2.2.2/dist/posenet.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/pose@latest/dist/teachablemachine-pose.min.js"></script>
+
+    <script type="text/javascript">
+        const URL = "https://teachablemachine.withgoogle.com/models/JyARf6Aq7P/";
+
+        let model, webcam, labelContainer, maxPredictions;
+        let canvas, ctx;
+        let isPredicting = false; 
+
+        async function init() {
+            try {
+                const modelURL = URL + "model.json";
+                const metadataURL = URL + "metadata.json";
+
+                model = await tmPose.load(modelURL, metadataURL);
+                maxPredictions = model.getTotalClasses();
+
+                const flip = true;
+                webcam = new tmPose.Webcam(400, 300, flip);
+                await webcam.setup();
+                await webcam.play();
+                
+                canvas = document.getElementById("canvas");
+                canvas.width = 400;
+                canvas.height = 300;
+                ctx = canvas.getContext("2d");
+
+                // 결과 바 생성 구문을 간소화하고 직관적으로 변경
+                labelContainer = document.getElementById("label-container");
+                labelContainer.innerHTML = "";
+                
+                for (let i = 0; i < maxPredictions; i++) {
+                    const barWrapper = document.createElement("div");
+                    barWrapper.className = "result-bar-wrapper";
+                    barWrapper.innerHTML = `
+                        <div class="label-text">
+                            <span class="class-name" id="name-${i}">연산 대기 중...</span>
+                            <span class="class-percentage" id="percent-${i}">0%</span>
+                        </div>
+                        <div class="progress-bar-bg">
+                            <div class="progress-bar-fill" id="bar-${i}"></div>
+                        </div>
+                    `;
+                    labelContainer.appendChild(barWrapper);
+                }
+
+                // 모든 준비가 완료되면 루프 시작
+                window.requestAnimationFrame(loop);
+            } catch (error) {
+                console.error("초기화 중 에러 발생:", error);
+                alert("모델을 로드하거나 카메라를 켜는 데 실패했습니다. URL을 확인해주세요.");
+            }
+        }
+
+        function loop(timestamp) {
+            webcam.update(); 
+            
+            if (webcam.canvas) {
+                ctx.drawImage(webcam.canvas, 0, 0);
+            }
+
+            if (!isPredicting) {
+                isPredicting = true;
+                predict().then(() => {
+                    isPredicting = false;
+                }).catch(err => {
+                    console.error("예측 루프 에러:", err);
+                    isPredicting = false; // 에러가 나도 루프가 완전히 멈추지 않도록 플래그 해제
+                });
+            }
+
+            window.requestAnimationFrame(loop);
+        }
+
+        async function predict() {
+            // 포즈 추정 및 결과 도출
+            const { pose, posenetOutput } = await model.estimatePose(webcam.canvas);
+            const prediction = await model.predict(posenetOutput);
+
+            // 캔버스에 포즈 스켈레톤 그리기
+            if (pose) {
+                const minPartConfidence = 0.5;
+                tmPose.drawKeypoints(pose.keypoints, minPartConfidence, ctx);
+                tmPose.drawSkeleton(pose.keypoints, minPartConfidence, ctx);
+            }
+
+            // [핵심 수정] 하드코딩된 maxPredictions 대신 실제 들어온 prediction 데이터를 순회하여 매칭 오류 차단
+            prediction.forEach((pred, i) => {
+                const className = pred.className; // 'standing' 또는 'hello'
+                const probability = (pred.probability * 100).toFixed(0);
+
+                const nameEl = document.getElementById(`name-${i}`);
+                const percentEl = document.getElementById(`percent-${i}`);
+                const fillBarEl = document.getElementById(`bar-${i}`);
+
+                if (nameEl) nameEl.innerText = className;
+                if (percentEl) percentEl.innerText = probability + "%";
+                if (fillBarEl) {
+                    fillBarEl.style.width = probability + "%";
+                    fillBarEl.style.backgroundColor = probability > 70 ? "#34d399" : "#10b981";
+                }
+            });
+        }
+    </script>
+</body>
+</html>
